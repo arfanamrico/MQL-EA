@@ -1,0 +1,312 @@
+#property copyright "Copyright 2024, Mas JOEs.Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.01"
+
+#include <Expert\Expert.mqh>
+#include <Expert\Signal\SignalTEMA.mqh>
+#include <Expert\Trailing\TrailingMA.mqh>
+#include <Expert\Money\MoneyFixedLot.mqh>
+#include <Trade\Trade.mqh> // Include untuk CTrade
+
+// Input parameter
+input string             Expert_Title         = "TEMA25_5";     
+ulong                    Expert_MagicNumber   = 7605;           
+bool                     Expert_EveryTick     = false;          
+input int                Signal_ThresholdOpen = 10;             
+input int                Signal_ThresholdClose= 10;             
+input double             Signal_PriceLevel    = 0.0;            
+input double             Signal_StopLevel     = 40;  // SL fixed 40 pips          
+input double             Signal_TakeLevel     = 100;  // TP fixed 100 pips          
+input int                Signal_Expiration    = 1;                
+input int                Signal_TEMA_PeriodMA = 25;              
+input int                Signal_TEMA_Shift    = 0;                
+input ENUM_APPLIED_PRICE Signal_TEMA_Applied  = PRICE_CLOSE;    
+input double             Signal_TEMA_Weight   = 1.0;             
+input int                Trailing_MA_Period   = 9;             
+input int                Trailing_MA_Shift    = 0;                
+input ENUM_MA_METHOD     Trailing_MA_Method   = MODE_LWMA;       
+input ENUM_APPLIED_PRICE Trailing_MA_Applied  = PRICE_MEDIAN;    
+input int                WaitingOrderBars     = 2;                
+input double             Money_FixLot_Percent = 10.0;           
+input double             Money_FixLot_Lots    = 0.01;             
+input bool               CloseByRejection     = true;  
+
+CExpert ExtExpert;
+CTrade trade;
+CTrailingMA;
+
+int OnInit()
+{
+    if (!ExtExpert.Init(Symbol(), Period(), Expert_EveryTick, Expert_MagicNumber))
+    {
+        Print(": error initializing expert");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+
+    CExpertSignal *signal = new CExpertSignal;
+    if (signal == NULL)
+    {
+        Print(": error creating signal");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+
+    ExtExpert.InitSignal(signal);
+    signal.ThresholdOpen(Signal_ThresholdOpen);
+    signal.ThresholdClose(Signal_ThresholdClose);
+    signal.PriceLevel(Signal_PriceLevel);
+    signal.StopLevel(Signal_StopLevel);
+    signal.TakeLevel(Signal_TakeLevel);
+    signal.Expiration(Signal_Expiration);
+
+    CSignalTEMA *filter0 = new CSignalTEMA;
+    if (filter0 == NULL)
+    {
+        Print(": error creating filter0");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    signal.AddFilter(filter0);
+    filter0.PeriodMA(Signal_TEMA_PeriodMA);
+    filter0.Shift(Signal_TEMA_Shift);
+    filter0.Applied(Signal_TEMA_Applied);
+    filter0.Weight(Signal_TEMA_Weight);
+
+    CTrailingMA *trailing = new CTrailingMA;
+    if (trailing == NULL)
+    {
+        Print(": error creating trailing");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+
+    if (!ExtExpert.InitTrailing(trailing))
+    {
+        Print(": error initializing trailing");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    trailing.Period(Trailing_MA_Period);
+    trailing.Shift(Trailing_MA_Shift);
+    trailing.Method(Trailing_MA_Method);
+    trailing.Applied(Trailing_MA_Applied);
+
+    CMoneyFixedLot *money = new CMoneyFixedLot;
+    if (money == NULL)
+    {
+        Print(": error creating money");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+
+    if (!ExtExpert.InitMoney(money))
+    {
+        Print(": error initializing money");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+    money.Percent(Money_FixLot_Percent);
+    money.Lots(Money_FixLot_Lots);
+
+    if (!ExtExpert.ValidationSettings())
+    {
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+
+    if (!ExtExpert.InitIndicators())
+    {
+        Print(": error initializing indicators");
+        ExtExpert.Deinit();
+        return (INIT_FAILED);
+    }
+
+    return (INIT_SUCCEEDED);
+}
+
+void OnDeinit(const int reason)
+{
+    ExtExpert.Deinit();
+}
+
+void ApplyTrailingStop(ulong ticket)
+{
+    int period = 14;                          // Periode MA
+    int shift = 0;                            // Tanpa pergeseran
+    ENUM_MA_METHOD method = MODE_SMA;         // Simple Moving Average
+    int applied_price = PRICE_CLOSE;          // Gunakan harga penutupan
+    double currentMA = iMA(Symbol(), Period(), period, shift, method, applied_price);
+    double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+
+    if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+    {
+        double stopLoss = currentPrice - currentMA;
+        if (stopLoss > PositionGetDouble(POSITION_SL))
+            trade.PositionModify(ticket, currentPrice, stopLoss);
+    }
+    else if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
+    {
+        double stopLoss = currentPrice + currentMA;
+        if (stopLoss < PositionGetDouble(POSITION_SL))
+            trade.PositionModify(ticket, currentPrice, stopLoss);
+    }
+}
+
+void OnTick()
+{
+    double maValue = iMA(_Symbol, PERIOD_CURRENT, Signal_TEMA_PeriodMA, Signal_TEMA_Shift, Trailing_MA_Method, Signal_TEMA_Applied);
+    double priceClose = iClose(_Symbol, PERIOD_CURRENT, 0);
+
+    static datetime lastTradeTime = 0; 
+    datetime currentTime = iTime(_Symbol, PERIOD_CURRENT, 0); 
+
+    if (currentTime == lastTradeTime)
+        return;
+
+    double volume = (double)iVolume(_Symbol, PERIOD_CURRENT, 0); 
+    if (volume > 100) 
+    {
+        if (priceClose < maValue)  
+        {
+                if (WaitForBars(WaitingOrderBars))
+                {
+                    OpenSellOrder();
+                    lastTradeTime = currentTime;
+                }
+            }
+        }
+        else if (priceClose > maValue)  
+        {
+                if (WaitForBars(WaitingOrderBars))
+                {
+                    OpenBuyOrder();
+                    lastTradeTime = currentTime;
+                }
+            }
+
+    ExtExpert.OnTick();
+}
+
+bool WaitForBars(int bars)
+{
+    return (Bars(_Symbol, PERIOD_CURRENT) >= bars);
+}
+
+void OpenSellOrder()
+{
+    double lotSize = Money_FixLot_Lots;
+    double stopLoss = 0; 
+    double takeProfit = 0; 
+
+    double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    if (bidPrice == 0)
+    {
+        Print("Error retrieving Bid price.");
+        return;
+    }
+
+    stopLoss = bidPrice + Signal_StopLevel * _Point; 
+    takeProfit = bidPrice - Signal_TakeLevel * _Point; 
+
+    MqlTradeRequest request = {};
+    MqlTradeResult result = {};
+    request.action = TRADE_ACTION_DEAL;
+    request.symbol = _Symbol;
+    request.volume = lotSize;
+    request.type = ORDER_TYPE_SELL;
+    request.price = bidPrice;
+    request.deviation = 2;
+    request.sl = stopLoss;
+    request.tp = takeProfit;
+    request.magic = Expert_MagicNumber;
+    request.comment = "Sell Order";
+
+    if(!trade.OrderSend(request, result))
+    {
+        Print("Error opening SELL order: ", result.retcode);
+    }
+    else
+    {
+        Print("SELL order opened successfully! Ticket: ", result.order);
+    }
+}
+
+void OpenBuyOrder()
+{
+    double lotSize = Money_FixLot_Lots;
+    double stopLoss = 0; 
+    double takeProfit = 0; 
+
+    double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    if (askPrice == 0)
+    {
+        Print("Error retrieving Ask price.");
+        return;
+    }
+
+    stopLoss = askPrice - Signal_StopLevel * _Point; 
+    takeProfit = askPrice + Signal_TakeLevel * _Point; 
+
+    MqlTradeRequest request = {};
+    MqlTradeResult result = {};
+    request.action = TRADE_ACTION_DEAL;
+    request.symbol = _Symbol;
+    request.volume = lotSize;
+    request.type = ORDER_TYPE_BUY;
+    request.price = askPrice;
+    request.deviation = 2;
+    request.sl = stopLoss;
+    request.tp = takeProfit;
+    request.magic = Expert_MagicNumber;
+    request.comment = "Buy Order";
+
+    if(!trade.OrderSend(request, result))
+    {
+        Print("Error opening BUY order: ", result.retcode);
+    }
+    else
+    {
+        Print("BUY order opened successfully! Ticket: ", result.order);
+    }
+}
+    // Implementasi logika untuk penutupan berdasarkan penolakan
+void CloseByRejectionConditions()
+{
+    double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    for (int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+    ulong ticket = PositionGetTicket(i);
+        if (ticket == 0)
+            continue;
+
+        string symbol = PositionGetString(POSITION_SYMBOL);
+        if (symbol != _Symbol)
+            continue;
+
+        double priceOpen = PositionGetDouble(POSITION_PRICE_OPEN);
+        double stopLoss = PositionGetDouble(POSITION_SL);
+        double takeProfit = PositionGetDouble(POSITION_TP);
+        int positionType = PositionGetInteger(POSITION_TYPE);
+   
+        if (positionType == POSITION_TYPE_BUY) // Posisi BUY
+        {
+            // Jika harga bid turun mendekati harga entry dan rejection terjadi
+            if (bidPrice < priceOpen && MathAbs(bidPrice - priceOpen) <= (Signal_StopLevel * _Point))
+            {
+                trade.PositionClose(ticket);
+                Print("Position BUY closed by rejection at price: ", bidPrice);
+            }
+        }
+        else if (positionType == POSITION_TYPE_SELL) // Posisi SELL
+        {
+            // Jika harga ask naik mendekati harga entry dan rejection terjadi
+            if (askPrice > priceOpen && MathAbs(askPrice - priceOpen) <= (Signal_StopLevel * _Point))
+            {
+                trade.PositionClose(ticket);
+                Print("Position SELL closed by rejection at price: ", askPrice);
+            }
+        }
+    }
+}
