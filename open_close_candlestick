@@ -1,0 +1,129 @@
+#include <Trade/Trade.mqh>
+CTrade trade;
+
+// Deklarasi variabel global
+int openPositions = 0;
+datetime lastCandleTime = 0;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   Print("EA Initialized for M15 timeframe");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Print("EA Stopped");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Cek apakah ini candlestick M5 baru
+   datetime currentCandleTime = iTime(Symbol(), PERIOD_M15, 0);
+   if(currentCandleTime != lastCandleTime)
+   {
+      lastCandleTime = currentCandleTime;
+      CheckForNewPosition();
+   }
+   
+   ClosePositionIfProfit();
+}
+
+//+------------------------------------------------------------------+
+//| Fungsi untuk memeriksa pembukaan posisi baru di M5                |
+//+------------------------------------------------------------------+
+void CheckForNewPosition()
+{
+   openPositions = CountPositions();
+   
+   if(openPositions >= 4) return; // Hanya boleh 1 posisi terbuka
+   
+   double currentOpen = iOpen(Symbol(), PERIOD_M15, 0);
+   double prevClose = iClose(Symbol(), PERIOD_M15, 1);
+   
+   if(currentOpen > prevClose)
+   {
+      OpenPosition(ORDER_TYPE_BUY);
+   }
+   else if(currentOpen < prevClose)
+   {
+      OpenPosition(ORDER_TYPE_SELL);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Fungsi untuk membuka posisi                                      |
+//+------------------------------------------------------------------+
+bool OpenPosition(ENUM_ORDER_TYPE orderType)
+{
+   double price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(Symbol(), SYMBOL_ASK) : SymbolInfoDouble(Symbol(), SYMBOL_BID);
+   
+   if(trade.PositionOpen(Symbol(), orderType, 0.10, price, 0, 0, "M15_AutoTrade"))
+   {
+      Print("Opened ", (orderType == ORDER_TYPE_BUY ? "Buy" : "Sell"), " Position at ", price, " on M15 timeframe");
+      openPositions = CountPositions();
+      return true;
+   }
+   else
+   {
+      Print("Failed to open position: ", GetLastError());
+      return false;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Fungsi untuk menutup posisi jika profit >= 1.5                    |
+//+------------------------------------------------------------------+
+void ClosePositionIfProfit()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      if(PositionGetTicket(i) > 0)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(PositionSelectByTicket(ticket) && PositionGetString(POSITION_SYMBOL) == Symbol())  
+         {
+            double profit = PositionGetDouble(POSITION_PROFIT);
+            
+            if(profit >= 5.1)
+            {
+               if(!trade.PositionClose(ticket))
+               {
+                  Print("Error closing position ", ticket, ": ", GetLastError());
+               }
+               else
+               {
+                  Print("Position Closed Successfully with Profit: ", profit, " on M15 timeframe");
+                  openPositions = CountPositions();
+               }
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Fungsi menghitung jumlah posisi aktif                            |
+//+------------------------------------------------------------------+
+int CountPositions()
+{
+   int count = 0;
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0 && PositionSelectByTicket(ticket) && PositionGetString(POSITION_SYMBOL) == Symbol())
+      {
+         count++;
+      }
+   }
+   return count;
+}
