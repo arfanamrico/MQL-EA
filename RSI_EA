@@ -1,0 +1,134 @@
+//+------------------------------------------------------------------+
+//|                    RSI_AllIn_v2.mq5                              |
+//|        RSI Only - Max Position + Auto Close RSI 50               |
+//+------------------------------------------------------------------+
+#property strict
+
+#include <Trade/Trade.mqh>
+CTrade trade;
+
+// ===== INPUT =====
+input double   Lots             = 0.01;
+input int      RSIPeriod        = 8;
+input int      BuyLevel         = 30;
+input int      BuyAllIn         = 15;
+input int      SellLevel        = 70;
+input int      SellAllIn        = 85;
+input int      CloseLevel       = 50;
+input int      MaxBuyPositions  = 5;
+input int      MaxSellPositions = 5;
+input ulong    MagicNumber      = 888888;
+
+// ===== GLOBAL =====
+int rsiHandle;
+datetime lastTradeTime = 0;
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   rsiHandle = iRSI(_Symbol, _Period, RSIPeriod, PRICE_CLOSE);
+   if(rsiHandle == INVALID_HANDLE)
+   {
+      Print("Failed to create RSI handle");
+      return INIT_FAILED;
+   }
+   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   IndicatorRelease(rsiHandle);
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   double rsi[];
+   if(CopyBuffer(rsiHandle, 0, 0, 1, rsi) <= 0)
+      return;
+
+   double rsiValue = rsi[0];
+
+   int buyCount  = CountPositions(POSITION_TYPE_BUY);
+   int sellCount = CountPositions(POSITION_TYPE_SELL);
+
+   trade.SetExpertMagicNumber(MagicNumber);
+
+   // ================= AUTO CLOSE =================
+   if(buyCount > 0 && rsiValue >= CloseLevel)
+      CloseAll(POSITION_TYPE_BUY);
+
+   if(sellCount > 0 && rsiValue <= CloseLevel)
+      CloseAll(POSITION_TYPE_SELL);
+
+   // 1 trade per candle
+   datetime currentBarTime = iTime(_Symbol, _Period, 0);
+   if(currentBarTime == lastTradeTime)
+      return;
+
+   // ================= BUY LOGIC =================
+   if(rsiValue <= BuyLevel && sellCount == 0 && buyCount < MaxBuyPositions)
+   {
+      if(trade.Buy(Lots, _Symbol))
+         lastTradeTime = currentBarTime;
+   }
+
+   if(rsiValue <= BuyAllIn && sellCount == 0 && buyCount < MaxBuyPositions)
+   {
+      if(trade.Buy(Lots, _Symbol))
+         lastTradeTime = currentBarTime;
+   }
+
+   // ================= SELL LOGIC =================
+   if(rsiValue >= SellLevel && buyCount == 0 && sellCount < MaxSellPositions)
+   {
+      if(trade.Sell(Lots, _Symbol))
+         lastTradeTime = currentBarTime;
+   }
+
+   if(rsiValue >= SellAllIn && buyCount == 0 && sellCount < MaxSellPositions)
+   {
+      if(trade.Sell(Lots, _Symbol))
+         lastTradeTime = currentBarTime;
+   }
+}
+
+//+------------------------------------------------------------------+
+int CountPositions(ENUM_POSITION_TYPE type)
+{
+   int total = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         if(PositionGetInteger(POSITION_MAGIC) == (long)MagicNumber &&
+            PositionGetString(POSITION_SYMBOL) == _Symbol &&
+            PositionGetInteger(POSITION_TYPE) == type)
+         {
+            total++;
+         }
+      }
+   }
+   return total;
+}
+
+//+------------------------------------------------------------------+
+void CloseAll(ENUM_POSITION_TYPE type)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         if(PositionGetInteger(POSITION_MAGIC) == (long)MagicNumber &&
+            PositionGetString(POSITION_SYMBOL) == _Symbol &&
+            PositionGetInteger(POSITION_TYPE) == type)
+         {
+            trade.PositionClose(ticket);
+         }
+      }
+   }
+}
+//+------------------------------------------------------------------+
