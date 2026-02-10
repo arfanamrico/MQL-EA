@@ -1,0 +1,152 @@
+//Mau	Setting
+//EMA50	Period = 50
+//EMA100	Period = 100
+//EMA200	Period = 200
+//SMA	Method = SMA
+//LWMA	Method = LWMA
+
+#include <Trade/Trade.mqh>
+CTrade trade;
+
+//================ INPUT =================
+
+// Money Management
+input double LotSize       = 0.01;
+input double TargetProfit = 5.0;   // TP dalam mata uang
+
+// HTF Trend Filter
+input ENUM_TIMEFRAMES HTF_Timeframe = PERIOD_M15;
+input ENUM_MA_METHOD  HTF_MA_Method = MODE_EMA;
+input int             HTF_MA_Period = 200;
+
+// MACD (Entry TF M1)
+input int FastEMA  = 12;
+input int SlowEMA  = 26;
+input int SignalMA = 9;
+
+//========================================
+int macdHandle;
+int maHTFHandle;
+datetime lastBarTime = 0;
+
+//+------------------------------------------------------------------+
+// Draw Arrow
+void DrawArrow(string name, datetime time, double price, color clr, int code)
+{
+   if(ObjectFind(0, name) >= 0) return;
+
+   ObjectCreate(0, name, OBJ_ARROW, 0, time, price);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_ARROWCODE, code);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);
+}
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   macdHandle = iMACD(_Symbol, PERIOD_M1,
+                      FastEMA, SlowEMA, SignalMA, PRICE_CLOSE);
+
+   maHTFHandle = iMA(_Symbol, HTF_Timeframe,
+                     HTF_MA_Period, 0, HTF_MA_Method, PRICE_CLOSE);
+
+   if(macdHandle == INVALID_HANDLE || maHTFHandle == INVALID_HANDLE)
+   {
+      Print("Indicator handle error");
+      return INIT_FAILED;
+   }
+
+   Print("EA MACD MTF CLEAN loaded");
+   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   //===== TOTAL PROFIT =====
+   double totalProfit = 0.0;
+   for(int i=0; i<PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+         totalProfit += PositionGetDouble(POSITION_PROFIT);
+   }
+
+   //===== CLOSE ALL JIKA TP TERCAPAI =====
+   if(totalProfit >= TargetProfit)
+   {
+      for(int i=PositionsTotal()-1; i>=0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         trade.PositionClose(ticket);
+      }
+      return;
+   }
+
+   //===== ENTRY HANYA DI CANDLE BARU M1 =====
+   datetime barTime = iTime(_Symbol, PERIOD_M1, 0);
+   if(barTime == lastBarTime) return;
+   lastBarTime = barTime;
+
+   //===== MACD (DYNAMIC ARRAY, CLEAN) =====
+   double macdMain[], macdSignal[];
+   ArrayResize(macdMain, 2);
+   ArrayResize(macdSignal, 2);
+   ArraySetAsSeries(macdMain, true);
+   ArraySetAsSeries(macdSignal, true);
+
+   if(CopyBuffer(macdHandle, 0, 1, 2, macdMain) <= 0) return;
+   if(CopyBuffer(macdHandle, 1, 1, 2, macdSignal) <= 0) return;
+
+   //===== MA HTF =====
+   double maHTF[];
+   ArrayResize(maHTF, 1);
+   if(CopyBuffer(maHTFHandle, 0, 1, 1, maHTF) <= 0) return;
+
+   double closeM1 = iClose(_Symbol, PERIOD_M1, 1);
+
+   //===== TREND FILTER =====
+   bool buyTrend  = closeM1 > maHTF[0];
+   bool sellTrend = closeM1 < maHTF[0];
+
+   //===== MACD CROSS (FINAL, TIDAK TERBALIK) =====
+   bool buyCross  =
+      macdMain[1] <= macdSignal[1] &&
+      macdMain[0]  > macdSignal[0];
+
+   bool sellCross =
+      macdMain[1] >= macdSignal[1] &&
+      macdMain[0]  < macdSignal[0];
+
+   //===== 1 POSISI SAJA =====
+   if(PositionsTotal() > 0) return;
+
+   datetime arrowTime = iTime(_Symbol, PERIOD_M1, 1);
+
+   //===== BUY =====
+   if(buyTrend && buyCross)
+   {
+      if(trade.Buy(LotSize))
+      {
+         DrawArrow("BUY_"+(string)arrowTime,
+                   arrowTime,
+                   iLow(_Symbol, PERIOD_M1, 1) - _Point * 10,
+                   clrLime,
+                   233);
+      }
+   }
+
+   //===== SELL =====
+   if(sellTrend && sellCross)
+   {
+      if(trade.Sell(LotSize))
+      {
+         DrawArrow("SELL_"+(string)arrowTime,
+                   arrowTime,
+                   iHigh(_Symbol, PERIOD_M1, 1) + _Point * 10,
+                   clrRed,
+                   234);
+      }
+   }
+}
+//+------------------------------------------------------------------+
