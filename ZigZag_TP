@@ -1,0 +1,180 @@
+#include <Trade/Trade.mqh>
+CTrade trade;
+
+// ========= INPUT =========
+input int    ZZ_Depth     = 12;
+input int    ZZ_Deviation = 5;
+input int    ZZ_Backstep  = 3;
+
+input bool   EnableTrade  = true;
+input double Lot          = 0.1;
+input ulong  MagicNumber  = 888;
+
+input int    MaxPositions        = 5;
+input double TargetProfitMoney  = 10.0; // ✅ TP PER POSISI
+
+// ========= GLOBAL =========
+int zzHandle;
+double zz[], highArr[], lowArr[];
+datetime lastSignalTime = 0;
+
+// =========================
+int OnInit()
+{
+   zzHandle = iCustom(_Symbol, _Period, "Examples\\ZigZag",
+                      ZZ_Depth, ZZ_Deviation, ZZ_Backstep);
+
+   if(zzHandle == INVALID_HANDLE)
+   {
+      Print("Gagal load ZigZag");
+      return INIT_FAILED;
+   }
+
+   ArraySetAsSeries(zz, true);
+   ArraySetAsSeries(highArr, true);
+   ArraySetAsSeries(lowArr, true);
+
+   trade.SetExpertMagicNumber(MagicNumber);
+   return INIT_SUCCEEDED;
+}
+
+// =========================
+void OnDeinit(const int reason)
+{
+   IndicatorRelease(zzHandle);
+}
+
+// =========================
+void OnTick()
+{
+   CheckProfitClose();   // ✅ TP PER POSISI
+
+   if(!EnableTrade) return;
+   if(CountPositions() >= MaxPositions) return;
+
+   if(CopyBuffer(zzHandle, 0, 0, 300, zz) <= 0) return;
+   if(CopyHigh(_Symbol, _Period, 0, 300, highArr) <= 0) return;
+   if(CopyLow (_Symbol, _Period, 0, 300, lowArr)  <= 0) return;
+
+   int s0 = -1, s1 = -1;
+
+   for(int i = 1; i < 300; i++)
+   {
+      if(zz[i] == 0) continue;
+
+      if(s0 == -1)
+         s0 = i;
+      else
+      {
+         bool sameHigh = zz[s0] == highArr[s0] && zz[i] == highArr[i];
+         bool sameLow  = zz[s0] == lowArr[s0]  && zz[i] == lowArr[i];
+
+         if(sameHigh || sameLow)
+         {
+            s1 = i;
+            break;
+         }
+      }
+   }
+
+   if(s0 == -1 || s1 == -1) return;
+
+   datetime signalTime = iTime(_Symbol, _Period, s0);
+   if(signalTime == lastSignalTime) return;
+
+   // ================= HIGH =================
+   if(zz[s0] == highArr[s0])
+   {
+      if(zz[s0] > zz[s1])
+      {
+         DrawLabel("HH", s0, zz[s0], clrLime);
+         OpenBuy();
+      }
+      else
+      {
+         DrawLabel("LH", s0, zz[s0], clrRed);
+         OpenSell();
+      }
+   }
+
+   // ================= LOW ==================
+   if(zz[s0] == lowArr[s0])
+   {
+      if(zz[s0] > zz[s1])
+      {
+         DrawLabel("HL", s0, zz[s0], clrDodgerBlue);
+         OpenBuy();
+      }
+      else
+      {
+         DrawLabel("LL", s0, zz[s0], clrOrange);
+         OpenSell();
+      }
+   }
+
+   lastSignalTime = signalTime;
+}
+
+// =========================
+// ✅ TP PER POSISI
+void CheckProfitClose()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket)) continue;
+
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+      double profit = PositionGetDouble(POSITION_PROFIT);
+
+      if(profit >= TargetProfitMoney)
+      {
+         trade.PositionClose(ticket);
+      }
+   }
+}
+
+// =========================
+int CountPositions()
+{
+   int count = 0;
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         {
+            count++;
+         }
+      }
+   }
+   return count;
+}
+
+// =========================
+void OpenBuy()
+{
+   trade.Buy(Lot);
+}
+
+void OpenSell()
+{
+   trade.Sell(Lot);
+}
+
+// =========================
+void DrawLabel(string text, int shift, double price, color clr)
+{
+   string name = text + "_" + IntegerToString(iTime(_Symbol,_Period,shift));
+   if(ObjectFind(0, name) >= 0) return;
+
+   ObjectCreate(0, name, OBJ_TEXT, 0,
+                iTime(_Symbol,_Period,shift), price);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 10);
+}
