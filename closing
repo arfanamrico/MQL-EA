@@ -1,0 +1,101 @@
+#include <Trade/Trade.mqh>  // Pastikan pustaka trading disertakan
+CTrade trade;  // Deklarasi objek trade
+
+// Deklarasi variabel global
+int openPositions = 0;  // Jumlah posisi terbuka
+datetime lastOpenTime = 0; // Waktu terakhir membuka posisi
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   Print("EA Initialized");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Print("EA Stopped");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   static double highestPrice, lowestPrice;
+   
+
+   // Cek posisi terbuka untuk melihat apakah ada yang sudah memenuhi profit target
+   ClosePositionIfProfit();
+}
+
+//+------------------------------------------------------------------+
+//| Fungsi untuk membuka posisi                                      |
+//+------------------------------------------------------------------+
+bool OpenPosition(ENUM_ORDER_TYPE orderType)
+{
+   double price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(Symbol(), SYMBOL_ASK) : SymbolInfoDouble(Symbol(), SYMBOL_BID);
+   
+   if (trade.PositionOpen(Symbol(), orderType, 0.01, price, 0, 0, "AutoTrade"))
+   {
+      Print("Opened ", (orderType == ORDER_TYPE_BUY ? "Buy" : "Sell"), " Position at ", price);
+      openPositions = CountPositions(); // Perbarui jumlah posisi
+      return true;
+   }
+   else
+   {
+      Print("Failed to open position: ", GetLastError());
+      return false;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Fungsi untuk menutup posisi jika profit sudah tercapai           |
+//+------------------------------------------------------------------+
+void ClosePositionIfProfit()
+{
+   for (int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if (ticket > 0 && PositionSelectByTicket(ticket) && PositionGetString(POSITION_SYMBOL) == Symbol())  
+      {
+         double profit = PositionGetDouble(POSITION_PROFIT);  // Ambil profit dalam mata uang akun
+            
+         // Cek apakah profit sudah lebih dari 0.5
+         if (profit >= 10.0)
+         {
+            if (!trade.PositionClose(ticket))  
+            {
+               Print("Error closing position ", ticket, ": ", GetLastError());
+            }
+            else
+            {
+               Print("Position Closed Successfully with Profit: ", profit);
+               openPositions = CountPositions(); // Perbarui jumlah posisi terbuka
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Fungsi menghitung jumlah posisi aktif                           |
+//+------------------------------------------------------------------+
+int CountPositions()
+{
+   int count = 0;
+   for (int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if (ticket > 0 && PositionSelectByTicket(ticket) && PositionGetString(POSITION_SYMBOL) == Symbol())  
+      {
+         count++;
+      }
+   }
+   return count;
+}
