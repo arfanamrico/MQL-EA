@@ -1,0 +1,32 @@
+//+------------------------------------------------------------------+
+//|               CloseAll_NoFilter.mq5                              |
+//|   CLOSE ALL POSITIONS - No Magic, No Symbol Filter               |
+//+------------------------------------------------------------------+
+#property strict
+
+#include <Trade/Trade.mqh>
+CTrade trade;
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket))
+         continue;
+
+      if(!trade.PositionClose(ticket))
+      {
+         Print("Gagal close ticket ", ticket,
+               " error ", GetLastError());
+      }
+   }
+}
+//+------------------------------------------------------------------+
