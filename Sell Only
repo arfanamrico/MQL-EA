@@ -1,0 +1,115 @@
+//+------------------------------------------------------------------+
+//|      SellOnly_AllIn_NoRSI.mq5                                    |
+//|   SELL Only - Auto Open - TP per Position                       |
+//+------------------------------------------------------------------+
+#property strict
+
+#include <Trade/Trade.mqh>
+CTrade trade;
+
+// ===== INPUT =====
+input double   Lots              = 0.10;
+input int      MaxSellPositions  = 10;
+input double   MoneyTakeProfit   = 10.5;
+
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // ===== CLOSE JIKA PROFIT PER POSISI TERCAPAI =====
+   CloseProfitPerPosition();
+
+   // ===== HITUNG JUMLAH SELL SEKARANG =====
+   int sellCount = CountPositions(POSITION_TYPE_SELL);
+
+   // ===== AUTO OPEN SELL SAMPAI MAX =====
+   if(sellCount < MaxSellPositions)
+   {
+      int slots = MaxSellPositions - sellCount;
+
+      for(int i = 0; i < slots; i++)
+      {
+         trade.Sell(Lots, _Symbol);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// CLOSE PER POSISI JIKA PROFIT TERCAPAI
+//+------------------------------------------------------------------+
+void CloseProfitPerPosition()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+
+      if(!PositionSelectByTicket(ticket))
+         continue;
+
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+
+      if(PositionGetDouble(POSITION_PROFIT) >= MoneyTakeProfit)
+      {
+         trade.PositionClose(ticket);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// HITUNG POSISI BERDASARKAN TYPE
+//+------------------------------------------------------------------+
+int CountPositions(ENUM_POSITION_TYPE type)
+{
+   int total = 0;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+
+      if(!PositionSelectByTicket(ticket))
+         continue;
+
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+
+      if(PositionGetInteger(POSITION_TYPE) == type)
+         total++;
+   }
+
+   return total;
+}
+
+//+------------------------------------------------------------------+
+// CLOSE SEMUA POSISI BERDASARKAN TYPE
+//+------------------------------------------------------------------+
+void CloseAll(ENUM_POSITION_TYPE type)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+
+      if(!PositionSelectByTicket(ticket))
+         continue;
+
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+
+      if(PositionGetInteger(POSITION_TYPE) == type)
+      {
+         trade.PositionClose(ticket);
+      }
+   }
+}
+//+------------------------------------------------------------------+
