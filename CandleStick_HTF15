@@ -1,0 +1,378 @@
+//+------------------------------------------------------------------+
+//|   EA ZigZag + EMA200 Filter FINAL v3                            |
+//|   TF Entry : M1                                                  |
+//|   Trend Filter : EMA200 M15                                      |
+//|   Structure : ZigZag                                             |
+//+------------------------------------------------------------------+
+
+#include <Trade/Trade.mqh>
+CTrade trade;
+
+//================ INPUT =================//
+input double LotSize = 0.01;
+input int MaxPositions = 20;
+input double ProfitTarget = 0.7;
+
+// ZigZag setting
+input int Depth = 12;
+input int Deviation = 5;
+input int Backstep = 3;
+
+// EMA setting
+input int EMA_Period = 200;
+
+//================ GLOBAL =================//
+
+int zigzagHandle;
+int emaHandle;
+
+datetime lastCandleTime = 0;
+
+// ENUM STRUCTURE TYPE
+enum STRUCT_TYPE
+{
+   STRUCT_NONE,
+   STRUCT_HH,
+   STRUCT_LH,
+   STRUCT_HL,
+   STRUCT_LL
+};
+
+STRUCT_TYPE LastStructure = STRUCT_NONE;
+datetime LastStructureTime = 0;
+
+
+//+------------------------------------------------------------------+
+//| DRAW LABEL                                                       |
+//+------------------------------------------------------------------+
+
+void DrawLabel(string text, datetime t, double price, color clr)
+{
+   string name = text + "_" + IntegerToString((int)t);
+
+   if(ObjectFind(0,name)>=0)
+      return;
+
+   ObjectCreate(0,name,OBJ_TEXT,0,t,price);
+
+   ObjectSetString(0,name,OBJPROP_TEXT,text);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,10);
+}
+
+
+//+------------------------------------------------------------------+
+//| INIT                                                             |
+//+------------------------------------------------------------------+
+
+int OnInit()
+{
+   zigzagHandle=iCustom(Symbol(),
+                        PERIOD_M1,
+                        "Examples\\ZigZag",
+                        Depth,
+                        Deviation,
+                        Backstep);
+
+   if(zigzagHandle==INVALID_HANDLE)
+   {
+      Print("Failed load ZigZag");
+      return INIT_FAILED;
+   }
+
+
+   emaHandle=iMA(Symbol(),
+                 PERIOD_M15,
+                 EMA_Period,
+                 0,
+                 MODE_EMA,
+                 PRICE_CLOSE);
+
+   if(emaHandle==INVALID_HANDLE)
+   {
+      Print("Failed load EMA");
+      return INIT_FAILED;
+   }
+
+   Print("EA FINAL v3 Loaded");
+
+   return INIT_SUCCEEDED;
+}
+
+
+//+------------------------------------------------------------------+
+//| EMA FILTER                                                       |
+//+------------------------------------------------------------------+
+
+bool IsTrendBull()
+{
+   double ema[];
+   ArraySetAsSeries(ema,true);
+
+   if(CopyBuffer(emaHandle,0,0,1,ema)<=0)
+      return false;
+
+   double close=iClose(Symbol(),PERIOD_M15,0);
+
+   return close>ema[0];
+}
+
+bool IsTrendBear()
+{
+   double ema[];
+   ArraySetAsSeries(ema,true);
+
+   if(CopyBuffer(emaHandle,0,0,1,ema)<=0)
+      return false;
+
+   double close=iClose(Symbol(),PERIOD_M15,0);
+
+   return close<ema[0];
+}
+
+
+//+------------------------------------------------------------------+
+//| DETECT STRUCTURE FROM ZIGZAG                                     |
+//+------------------------------------------------------------------+
+
+void DetectStructure()
+{
+   double buffer[];
+   ArraySetAsSeries(buffer,true);
+
+   if(CopyBuffer(zigzagHandle,0,0,300,buffer)<=0)
+      return;
+
+
+   double lastHigh=0,prevHigh=0;
+   double lastLow=0,prevLow=0;
+
+   datetime lastHighTime=0,lastLowTime=0;
+
+
+   for(int i=0;i<300;i++)
+   {
+      if(buffer[i]==0) continue;
+
+      double zz=buffer[i];
+
+      double high=iHigh(Symbol(),PERIOD_M1,i);
+      double low=iLow(Symbol(),PERIOD_M1,i);
+
+      datetime t=iTime(Symbol(),PERIOD_M1,i);
+
+
+      // HIGH
+      if(MathAbs(zz-high)<=_Point*2)
+      {
+         if(lastHigh==0)
+         {
+            lastHigh=zz;
+            lastHighTime=t;
+         }
+         else if(prevHigh==0)
+         {
+            prevHigh=zz;
+         }
+      }
+
+
+      // LOW
+      if(MathAbs(zz-low)<=_Point*2)
+      {
+         if(lastLow==0)
+         {
+            lastLow=zz;
+            lastLowTime=t;
+         }
+         else if(prevLow==0)
+         {
+            prevLow=zz;
+         }
+      }
+   }
+
+
+   // HL
+   if(lastLow>prevLow && lastLowTime>LastStructureTime)
+   {
+      LastStructure=STRUCT_HL;
+      LastStructureTime=lastLowTime;
+
+      DrawLabel("HL",lastLowTime,lastLow,clrLime);
+
+      Print("Structure HL detected");
+   }
+
+
+   // LL
+   if(lastLow<prevLow && lastLowTime>LastStructureTime)
+   {
+      LastStructure=STRUCT_LL;
+      LastStructureTime=lastLowTime;
+
+      DrawLabel("LL",lastLowTime,lastLow,clrGreen);
+
+      Print("Structure LL detected");
+   }
+
+
+   // HH
+   if(lastHigh>prevHigh && lastHighTime>LastStructureTime)
+   {
+      LastStructure=STRUCT_HH;
+      LastStructureTime=lastHighTime;
+
+      DrawLabel("HH",lastHighTime,lastHigh,clrRed);
+
+      Print("Structure HH detected");
+   }
+
+
+   // LH
+   if(lastHigh<prevHigh && lastHighTime>LastStructureTime)
+   {
+      LastStructure=STRUCT_LH;
+      LastStructureTime=lastHighTime;
+
+      DrawLabel("LH",lastHighTime,lastHigh,clrOrange);
+
+      Print("Structure LH detected");
+   }
+
+}
+
+
+//+------------------------------------------------------------------+
+//| COUNT POSITION                                                   |
+//+------------------------------------------------------------------+
+
+int CountPositions()
+{
+   int count=0;
+
+   for(int i=0;i<PositionsTotal();i++)
+   {
+      ulong ticket=PositionGetTicket(i);
+
+      if(PositionSelectByTicket(ticket))
+      {
+         if(PositionGetString(POSITION_SYMBOL)==Symbol())
+            count++;
+      }
+   }
+
+   return count;
+}
+
+
+//+------------------------------------------------------------------+
+//| OPEN BUY                                                         |
+//+------------------------------------------------------------------+
+
+void OpenBuy()
+{
+   if(CountPositions()>=MaxPositions)
+      return;
+
+   double ask=SymbolInfoDouble(Symbol(),SYMBOL_ASK);
+
+   trade.PositionOpen(Symbol(),
+                      ORDER_TYPE_BUY,
+                      LotSize,
+                      ask,
+                      0,
+                      0,
+                      "BUY");
+}
+
+
+//+------------------------------------------------------------------+
+//| OPEN SELL                                                        |
+//+------------------------------------------------------------------+
+
+void OpenSell()
+{
+   if(CountPositions()>=MaxPositions)
+      return;
+
+   double bid=SymbolInfoDouble(Symbol(),SYMBOL_BID);
+
+   trade.PositionOpen(Symbol(),
+                      ORDER_TYPE_SELL,
+                      LotSize,
+                      bid,
+                      0,
+                      0,
+                      "SELL");
+}
+
+
+//+------------------------------------------------------------------+
+//| CLOSE PROFIT                                                     |
+//+------------------------------------------------------------------+
+
+void CloseProfitPositions()
+{
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong ticket=PositionGetTicket(i);
+
+      if(PositionSelectByTicket(ticket))
+      {
+         if(PositionGetString(POSITION_SYMBOL)==Symbol())
+         {
+            double profit=PositionGetDouble(POSITION_PROFIT);
+
+            if(profit>=ProfitTarget)
+            {
+               trade.PositionClose(ticket);
+
+               Print("Closed profit ",profit);
+            }
+         }
+      }
+   }
+}
+
+
+//+------------------------------------------------------------------+
+//| MAIN                                                             |
+//+------------------------------------------------------------------+
+
+void OnTick()
+{
+   datetime candle=iTime(Symbol(),PERIOD_M1,0);
+
+   if(candle!=lastCandleTime)
+   {
+      lastCandleTime=candle;
+
+      DetectStructure();
+
+
+      // BUY LOGIC
+      if(IsTrendBull())
+      {
+         if(LastStructure==STRUCT_HL ||
+            LastStructure==STRUCT_LL)
+         {
+            OpenBuy();
+         }
+      }
+
+
+      // SELL LOGIC
+      if(IsTrendBear())
+      {
+         if(LastStructure==STRUCT_HH ||
+            LastStructure==STRUCT_LH)
+         {
+            OpenSell();
+         }
+      }
+   }
+
+
+   CloseProfitPositions();
+}
