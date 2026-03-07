@@ -1,0 +1,96 @@
+//+------------------------------------------------------------------+
+//|                 AO Color Change EA FIXED (MT5)                  |
+//+------------------------------------------------------------------+
+#include <Trade/Trade.mqh>
+CTrade trade;
+
+//---- Input
+input double LotSize = 0.01;
+input int StopLoss = 300;
+input int TakeProfit = 600;
+input bool UseSLTP = false;
+
+//---- Global
+int aoHandle;
+double aoBuffer[];
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   aoHandle = iAO(_Symbol, _Period);
+   if(aoHandle == INVALID_HANDLE)
+   {
+      Print("Gagal membuat handle AO");
+      return(INIT_FAILED);
+   }
+
+   ArraySetAsSeries(aoBuffer, true);
+   return(INIT_SUCCEEDED);
+}
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   if(CopyBuffer(aoHandle, 0, 0, 3, aoBuffer) < 3)
+      return;
+
+   // Gunakan candle yang sudah close
+   double ao_last   = aoBuffer[1];
+   double ao_prev   = aoBuffer[2];
+
+   bool lastGreen = ao_last > ao_prev;
+   bool lastRed   = ao_last < ao_prev;
+
+   bool buyOpen = false;
+   bool sellOpen = false;
+
+   if(PositionSelect(_Symbol))
+   {
+      if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+         buyOpen = true;
+      else
+         sellOpen = true;
+   }
+
+   // ================= BUY =================
+   if(lastGreen && sellOpen)
+      trade.PositionClose(_Symbol);
+
+   if(lastGreen && !buyOpen)
+      OpenBuy();
+
+   // ================= SELL =================
+   if(lastRed && buyOpen)
+      trade.PositionClose(_Symbol);
+
+   if(lastRed && !sellOpen)
+      OpenSell();
+}
+//+------------------------------------------------------------------+
+void OpenBuy()
+{
+   double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double sl=0,tp=0;
+
+   if(UseSLTP)
+   {
+      sl = price - StopLoss * _Point;
+      tp = price + TakeProfit * _Point;
+   }
+
+   trade.Buy(LotSize,_Symbol,price,sl,tp,"AO Buy");
+}
+//+------------------------------------------------------------------+
+void OpenSell()
+{
+   double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double sl=0,tp=0;
+
+   if(UseSLTP)
+   {
+      sl = price + StopLoss * _Point;
+      tp = price - TakeProfit * _Point;
+   }
+
+   trade.Sell(LotSize,_Symbol,price,sl,tp,"AO Sell");
+}
+//+------------------------------------------------------------------+
